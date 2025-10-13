@@ -1,0 +1,19 @@
+﻿# LangChain and LLM
+langchain==0.3.7
+langchain-google-genai==0.0.11
+
+# Google APIs
+google-api-python-client==2.100.0
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+
+# Utilities
+python-dotenv==1.0.0
+pytz==2023.3
+
+# Email parsing
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# Testing (optional for now)
+pytest==7.4.3
