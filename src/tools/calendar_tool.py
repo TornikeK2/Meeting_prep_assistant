@@ -1,6 +1,3 @@
-"""
-Google Calendar operations for meeting detection and classification
-"""
 from datetime import datetime, timedelta
 from typing import List, Dict
 import pytz
