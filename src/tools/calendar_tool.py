@@ -18,7 +18,7 @@ class CalendarTool:
             internal_domains: List of internal email domains (e.g., ['example.com'])
         """
         self.service = service
-        self.internal_domains = internal_domains or ['example.com']
+        self.internal_domains = internal_domains or ['gmail.com']
 
     def get_upcoming_meetings(self, hours_ahead_min=4, hours_ahead_max=24):
         """
