@@ -9,117 +9,69 @@ from bs4 import BeautifulSoup
 
 
 class GmailTool:
-    """
-    Tool for searching and retrieving emails relevant to meetings
-    """
+    """Search and retrieve emails for meetings"""
 
     def __init__(self, service):
-        """
-        Initialize GmailTool
-
-        Args:
-            service: Authenticated Gmail API service
-        """
         self.service = service
 
     def search_relevant_emails(self, meeting: Dict, days: int = 7, max_results: int = 10) -> List[Dict]:
-        """
-        Search Gmail for emails relevant to the meeting
-
-        Args:
-            meeting: Meeting dictionary from CalendarTool
-            days: How many days back to search (default: 7)
-            max_results: Maximum number of emails to retrieve
-
-        Returns:
-            List of email dictionaries, sorted by relevance
-        """
-        # Build search query
+        """Search Gmail for relevant emails"""
         query = self._build_search_query(meeting, days)
 
-        print(f"Searching Gmail with query: {query}")
-
         try:
-            # Execute search
             results = self.service.users().messages().list(
                 userId='me',
                 q=query,
-                maxResults=max_results * 2  # Get more, filter later
+                maxResults=max_results * 2
             ).execute()
 
             messages = results.get('messages', [])
 
             if not messages:
-                print("No emails found")
                 return []
 
-            print(f"Found {len(messages)} emails")
-
-            # Get full content for each email
             email_threads = []
             for msg in messages:
                 email_data = self._get_message_details(msg['id'])
                 if email_data:
                     email_threads.append(email_data)
 
-            # Score and rank by relevance
             scored_emails = self._score_emails(email_threads, meeting)
-
-            # Return top results
             return scored_emails[:max_results]
 
         except Exception as e:
-            print(f"Error searching Gmail: {e}")
             return []
 
     def _build_search_query(self, meeting: Dict, days: int = 7) -> str:
-        """
-        Build Gmail search query from meeting metadata
-
-        Example query:
-        (from:john@company.com OR to:john@company.com)
-        (subject:"Q4 planning" OR "Q4 planning")
-        newer_than:7d
-        -in:spam -in:trash
-        """
+        """Build Gmail query from meeting info"""
         query_parts = []
 
-        # 1. Attendee-based search
+        # Search by attendees
         attendee_queries = []
-        for email in meeting['attendees'][:10]:  # Limit to avoid too long query
+        for email in meeting['attendees'][:10]:
             attendee_queries.append(f"from:{email}")
             attendee_queries.append(f"to:{email}")
 
         if attendee_queries:
             query_parts.append(f"({' OR '.join(attendee_queries)})")
 
-        # 2. Keyword-based search from title
+        # Search by keywords
         keywords = self._extract_keywords(meeting['title'])
-
         if keywords:
-            # Search in both subject and body
             keyword_queries = []
             for kw in keywords:
                 keyword_queries.append(f'subject:"{kw}"')
                 keyword_queries.append(f'"{kw}"')
             query_parts.append(f"({' OR '.join(keyword_queries)})")
 
-        # 3. Date filter (configurable days)
         query_parts.append(f"newer_than:{days}d")
-
-        # 4. Exclude spam and trash
         query_parts.append("-in:spam")
         query_parts.append("-in:trash")
 
         return ' '.join(query_parts)
 
     def _extract_keywords(self, text: str) -> List[str]:
-        """
-        Extract meaningful keywords from meeting title
-
-        Removes common stop words and returns important terms
-        """
-        # Common stop words to remove
+        """Extract keywords from meeting title"""
         stop_words = {
             'meeting', 'sync', 'call', 'discussion', 'review', 'update',
             'weekly', 'monthly', 'daily', 'standup', 'stand-up', 'stand',
@@ -140,15 +92,7 @@ class GmailTool:
         return keywords[:4]
 
     def _get_message_details(self, message_id: str) -> Dict:
-        """
-        Retrieve full message content
-
-        Args:
-            message_id: Gmail message ID
-
-        Returns:
-            Dictionary with email details
-        """
+        """Get email details"""
         try:
             message = self.service.users().messages().get(
                 userId='me',
@@ -196,10 +140,7 @@ class GmailTool:
         return ''
 
     def _get_email_body(self, message: Dict) -> str:
-        """
-        Extract plain text body from email
-        Handles HTML emails and multipart messages
-        """
+        """Extract email body text"""
         payload = message.get('payload', {})
 
         # Try to get plain text part
@@ -234,15 +175,7 @@ class GmailTool:
         return message.get('snippet', '')
 
     def _score_emails(self, emails: List[Dict], meeting: Dict) -> List[Dict]:
-        """
-        Score and rank emails by relevance to meeting
-
-        Scoring algorithm:
-        - Attendee match: 40%
-        - Keyword relevance: 30%
-        - Recency: 20%
-        - Thread activity: 10%
-        """
+        """Score emails by relevance"""
         scored = []
 
         meeting_keywords = self._extract_keywords(meeting['title'])
@@ -291,20 +224,14 @@ class GmailTool:
         return scored
 
     def _is_recent(self, date_str: str, days: int) -> bool:
-        """
-        Check if email date is within X days
-        Simple heuristic based on date string
-        """
-        # Simple check - look for common recent indicators
+        """Check if email is recent"""
         recent_indicators = ['hour', 'minute', 'today', 'yesterday']
 
         if any(indicator in date_str.lower() for indicator in recent_indicators):
             return True
 
-        # Check for "X days ago" pattern
         if 'day' in date_str.lower():
             try:
-                # Try to extract number
                 nums = re.findall(r'\d+', date_str)
                 if nums and int(nums[0]) <= days:
                     return True
@@ -314,15 +241,7 @@ class GmailTool:
         return False
 
     def send_email(self, to: str, subject: str, body: str, is_html: bool = True):
-        """
-        Send email via Gmail API
-
-        Args:
-            to: Recipient email address
-            subject: Email subject
-            body: Email body (plain text or HTML)
-            is_html: Whether body is HTML (default: True)
-        """
+        """Send email via Gmail"""
         from email.mime.text import MIMEText
 
         try:
