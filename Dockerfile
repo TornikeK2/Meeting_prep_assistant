@@ -16,6 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
+COPY main.py .
 COPY src/ ./src/
 COPY config/ ./config/
 COPY .env .
@@ -25,4 +26,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 # Run the application
-CMD ["python", "src/main.py"]
+CMD ["python", "main.py"]
