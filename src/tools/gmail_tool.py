@@ -262,9 +262,9 @@ class GmailTool:
                 body={'raw': raw}
             ).execute()
 
-            print(f"✓ Email sent successfully. Message ID: {send_message['id']}")
+            print(f"Email sent successfully. Message ID: {send_message['id']}")
             return send_message['id']
 
         except Exception as e:
-            print(f"✗ Error sending email: {e}")
+            print(f"Error sending email: {e}")
             return None
