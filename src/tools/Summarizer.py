@@ -1,23 +1,26 @@
 from os import getenv
-import google.generativeai as genai
+from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import List, Dict, Optional
 from datetime import datetime
 
 
 class MeetingSummarizer:
     """
-    Generates AI-powered meeting briefs using Gemini
+    Generates AI-powered meeting briefs using Gemini via LangChain
     Returns structured data (no HTML formatting)
     """
 
     def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash-exp"):
-        """Initialize the summarizer with Gemini API"""
-        self.api_key = getenv('GEMINI_API_KEY')
+        """Initialize the summarizer with Gemini API via LangChain"""
+        self.api_key = api_key or getenv('GEMINI_API_KEY')
         if not self.api_key:
             raise ValueError("Gemini API key not found")
 
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(model_name)
+        self.model = ChatGoogleGenerativeAI(
+            model=model_name,
+            google_api_key=self.api_key,
+            temperature=0.3
+        )
         self.model_name = model_name
 
     def generate_meeting_brief(self, meeting: Dict, emails: List[Dict], max_emails: int = 5) -> Dict:
@@ -38,11 +41,11 @@ class MeetingSummarizer:
             email_context = self._format_email_context(emails[:max_emails])
             prompt = self._build_prompt(meeting_context, email_context)
 
-            response = self.model.generate_content(prompt)
+            response = self.model.invoke(prompt)
 
             return {
                 'success': True,
-                'summary': response.text,
+                'summary': response.content,
                 'meeting': meeting,
                 'emails': emails[:max_emails],
                 'generated_at': datetime.now().isoformat()
