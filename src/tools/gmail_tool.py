@@ -14,9 +14,27 @@ class GmailTool:
     def __init__(self, service):
         self.service = service
 
-    def search_relevant_emails(self, meeting: Dict, days: int = 7, max_results: int = 10) -> List[Dict]:
-        """Search Gmail for relevant emails"""
-        query = self._build_search_query(meeting, days)
+    def search_relevant_emails(
+        self,
+        meeting: Dict,
+        days: int = 7,
+        max_results: int = 10,
+        project_keywords: List[str] = None
+    ) -> List[Dict]:
+        """
+        Search Gmail for relevant emails
+
+        Args:
+            meeting: Meeting dict with title, attendees, etc.
+            days: How many days back to search
+            max_results: Maximum number of emails to return
+            project_keywords: Optional list of user-defined keywords for this project.
+                            If provided, these override auto-extracted keywords from meeting title.
+
+        Returns:
+            List of email dicts with relevance scores
+        """
+        query = self._build_search_query(meeting, days, project_keywords)
 
         try:
             results = self.service.users().messages().list(
@@ -42,8 +60,23 @@ class GmailTool:
         except Exception as e:
             return []
 
-    def _build_search_query(self, meeting: Dict, days: int = 7) -> str:
-        """Build Gmail query from meeting info"""
+    def _build_search_query(
+        self,
+        meeting: Dict,
+        days: int = 7,
+        project_keywords: List[str] = None
+    ) -> str:
+        """
+        Build Gmail query from meeting info
+
+        Args:
+            meeting: Meeting dict
+            days: Days back to search
+            project_keywords: Optional user-defined keywords (overrides auto-extraction)
+
+        Returns:
+            Gmail search query string
+        """
         query_parts = []
 
         # Search by attendees
@@ -55,8 +88,14 @@ class GmailTool:
         if attendee_queries:
             query_parts.append(f"({' OR '.join(attendee_queries)})")
 
-        # Search by keywords
-        keywords = self._extract_keywords(meeting['title'])
+        # Search by keywords (use project_keywords if provided, otherwise auto-extract)
+        if project_keywords:
+            # Use user-defined project keywords
+            keywords = project_keywords
+        else:
+            # Fallback to auto-extraction from meeting title
+            keywords = self._extract_keywords(meeting['title'])
+
         if keywords:
             keyword_queries = []
             for kw in keywords:
@@ -190,7 +229,7 @@ class GmailTool:
 
             for attendee in meeting_attendees:
                 if attendee in email_from or attendee in email_to:
-                    score += 0.4
+                    score += 0.5
                     break
 
             # 2. Keyword relevance (30%)
