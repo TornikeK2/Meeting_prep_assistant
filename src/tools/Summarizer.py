@@ -2,6 +2,7 @@ from os import getenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import List, Dict, Optional
 from datetime import datetime
+import json
 
 
 class MeetingSummarizer:
@@ -97,6 +98,5 @@ class BriefFormatter:
     @staticmethod
     def to_json(brief_data: Dict) -> str:
         """Convert brief to JSON"""
-        import json
         return json.dumps(brief_data, indent=2)
 

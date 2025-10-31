@@ -19,7 +19,9 @@ class GmailTool:
         meeting: Dict,
         days: int = 7,
         max_results: int = 10,
-        project_keywords: List[str] = None
+        project_keywords: List[str] = None,
+        customer_name: str = None,
+        customer_domain: str = None
     ) -> List[Dict]:
         """
         Search Gmail for relevant emails
@@ -30,11 +32,15 @@ class GmailTool:
             max_results: Maximum number of emails to return
             project_keywords: Optional list of user-defined keywords for this project.
                             If provided, these override auto-extracted keywords from meeting title.
+            customer_name: Optional customer name to filter emails (e.g., "Microsoft")
+            customer_domain: Optional customer domain to filter emails (e.g., "microsoft.com")
 
         Returns:
             List of email dicts with relevance scores
         """
-        query = self._build_search_query(meeting, days, project_keywords)
+        query = self._build_search_query(meeting, days, project_keywords, customer_name, customer_domain)
+
+        print(f"Gmail search query: {query}")
 
         try:
             results = self.service.users().messages().list(
@@ -45,6 +51,8 @@ class GmailTool:
 
             messages = results.get('messages', [])
 
+            print(f"Gmail search found {len(messages)} messages")
+
             if not messages:
                 return []
 
@@ -53,8 +61,10 @@ class GmailTool:
                 email_data = self._get_message_details(msg['id'])
                 if email_data:
                     email_threads.append(email_data)
+                    print(f"Found email: '{email_data['subject']}' from {email_data['from']}")
 
-            scored_emails = self._score_emails(email_threads, meeting)
+            scored_emails = self._score_emails(email_threads, meeting, customer_name)
+            print(f"Returning top {len(scored_emails[:max_results])} emails after scoring")
             return scored_emails[:max_results]
 
         except Exception as e:
@@ -64,7 +74,9 @@ class GmailTool:
         self,
         meeting: Dict,
         days: int = 7,
-        project_keywords: List[str] = None
+        project_keywords: List[str] = None,
+        customer_name: str = None,
+        customer_domain: str = None
     ) -> str:
         """
         Build Gmail query from meeting info
@@ -73,35 +85,53 @@ class GmailTool:
             meeting: Meeting dict
             days: Days back to search
             project_keywords: Optional user-defined keywords (overrides auto-extraction)
+            customer_name: Optional customer name to search for
+            customer_domain: Optional customer domain to filter by
 
         Returns:
             Gmail search query string
         """
         query_parts = []
 
-        # Search by attendees
-        attendee_queries = []
-        for email in meeting['attendees'][:10]:
-            attendee_queries.append(f"from:{email}")
-            attendee_queries.append(f"to:{email}")
-
-        if attendee_queries:
-            query_parts.append(f"({' OR '.join(attendee_queries)})")
-
-        # Search by keywords (use project_keywords if provided, otherwise auto-extract)
-        if project_keywords:
-            # Use user-defined project keywords
-            keywords = project_keywords
+        # Search by customer domain if provided
+        if customer_domain:
+            domain_queries = []
+            domain_queries.append(f"from:@{customer_domain}")
+            domain_queries.append(f"to:@{customer_domain}")
+            query_parts.append(f"({' OR '.join(domain_queries)})")
         else:
-            # Fallback to auto-extraction from meeting title
-            keywords = self._extract_keywords(meeting['title'])
+            # Search by attendees if no domain filter
+            attendee_queries = []
+            for email in meeting['attendees'][:10]:
+                attendee_queries.append(f"from:{email}")
+                attendee_queries.append(f"to:{email}")
 
-        if keywords:
+            if attendee_queries:
+                query_parts.append(f"({' OR '.join(attendee_queries)})")
+
+        # Search by customer name or keywords
+        if customer_name:
+            # Use customer name as primary keyword
+            name_queries = []
+            name_queries.append(f'subject:"{customer_name}"')
+            name_queries.append(f'"{customer_name}"')
+            query_parts.append(f"({' OR '.join(name_queries)})")
+        elif project_keywords:
+            # Use user-defined project keywords
             keyword_queries = []
-            for kw in keywords:
+            for kw in project_keywords:
                 keyword_queries.append(f'subject:"{kw}"')
                 keyword_queries.append(f'"{kw}"')
             query_parts.append(f"({' OR '.join(keyword_queries)})")
+        else:
+            # Fallback to auto-extraction from meeting title
+            keywords = self._extract_keywords(meeting['title'])
+            if keywords:
+                keyword_queries = []
+                for kw in keywords:
+                    keyword_queries.append(f'subject:"{kw}"')
+                    keyword_queries.append(f'"{kw}"')
+                query_parts.append(f"({' OR '.join(keyword_queries)})")
 
         query_parts.append(f"newer_than:{days}d")
         query_parts.append("-in:spam")
@@ -213,7 +243,7 @@ class GmailTool:
         # Last resort: use snippet
         return message.get('snippet', '')
 
-    def _score_emails(self, emails: List[Dict], meeting: Dict) -> List[Dict]:
+    def _score_emails(self, emails: List[Dict], meeting: Dict, customer_name: str = None) -> List[Dict]:
         """Score emails by relevance"""
         scored = []
 
@@ -233,9 +263,12 @@ class GmailTool:
                     break
 
             # 2. Keyword relevance (30%)
-            if meeting_keywords:
-                email_text = f"{email.get('subject', '')} {email.get('body', '')}".lower()
+            email_text = f"{email.get('subject', '')} {email.get('body', '')}".lower()
 
+            # Boost score if customer name is found
+            if customer_name and customer_name.lower() in email_text:
+                score += 0.3
+            elif meeting_keywords:
                 matching_keywords = sum(1 for kw in meeting_keywords if kw in email_text)
                 keyword_score = matching_keywords / len(meeting_keywords)
                 score += 0.3 * keyword_score

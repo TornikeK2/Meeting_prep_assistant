@@ -47,6 +47,72 @@ class CalendarTool:
         client_meetings = [m for m in all_meetings if m['is_client_meeting']]
         return client_meetings
 
+    def get_meetings_by_date_range(self, start_date, end_date, customer_domain=None):
+        """
+        Get meetings within a specific date range, optionally filtered by customer domain
+
+        Args:
+            start_date: Start date in format 'YYYY-MM-DD'
+            end_date: End date in format 'YYYY-MM-DD'
+            customer_domain: Optional domain to filter meetings (e.g., 'microsoft.com')
+
+        Returns:
+            List of meeting dicts
+        """
+        try:
+            # Parse dates and convert to RFC3339 format
+            from datetime import datetime
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+            # Set time to start of day for start_date and end of day for end_date
+            start_dt = start_dt.replace(hour=0, minute=0, second=0)
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+
+            time_min = start_dt.isoformat() + 'Z'
+            time_max = end_dt.isoformat() + 'Z'
+
+            events_result = self.service.events().list(
+                calendarId='primary',
+                timeMin=time_min,
+                timeMax=time_max,
+                maxResults=100,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+
+            events = events_result.get('items', [])
+            meetings = []
+
+            for event in events:
+                if self._should_prepare_meeting(event):
+                    meeting = self._parse_event(event)
+                    meeting['is_client_meeting'] = self._is_external_meeting(meeting)
+                    meeting['priority'] = self._calculate_priority(meeting)
+
+                    # Filter by customer domain if specified
+                    if customer_domain:
+                        if self._has_attendee_from_domain(meeting, customer_domain):
+                            meetings.append(meeting)
+                    else:
+                        meetings.append(meeting)
+
+            return meetings
+
+        except Exception as e:
+            print(f"Error fetching meetings by date range: {e}")
+            return []
+
+    def _has_attendee_from_domain(self, meeting, domain):
+        """Check if any attendee is from the specified domain"""
+        domain = domain.lower().strip()
+        for attendee_email in meeting['attendees']:
+            if '@' in attendee_email:
+                attendee_domain = attendee_email.split('@')[1].lower()
+                if attendee_domain == domain:
+                    return True
+        return False
+
     def _should_prepare_meeting(self, event: Dict) -> bool:
         """Check if meeting needs prep"""
         # Skip all-day events
@@ -107,6 +173,8 @@ class CalendarTool:
             return 'HIGH'
         elif len(meeting['attendees']) >= 5:
             return 'MEDIUM'
+        # elif meeting.get('is_internal_meeting') and len(meeting['attendees']) <= 3:
+        #     return 'INTERNAL'
         else:
             return 'LOW'
 

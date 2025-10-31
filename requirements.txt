@@ -16,5 +16,9 @@ pytz==2023.3
 beautifulsoup4==4.12.2
 lxml==4.9.3
 
-# TestinginO
+# API Framework
+Flask==3.0.0
+flask-cors==4.0.0
+
+# Testing
 pytest==7.4.3
