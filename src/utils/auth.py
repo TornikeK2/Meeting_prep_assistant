@@ -44,20 +44,45 @@ class GoogleAuthManager:
                 try:
                     self.creds.refresh(Request())
                     print("Credentials refreshed successfully")
+
+                    # Save refreshed credentials
+                    print(f"Saving refreshed credentials to {self.token_file}")
+                    with open(self.token_file, 'wb') as token:
+                        pickle.dump(self.creds, token)
+                    print("Credentials saved\n")
+
                 except Exception as e:
+                    print(f"Token refresh failed: {e}")
+                    # Check if running in cloud environment
+                    if os.getenv('K_SERVICE'):  # Cloud Run environment variable
+                        raise Exception(
+                            "Authentication failed in cloud environment. "
+                            "Token refresh failed and cannot run browser flow. "
+                            "Please regenerate token.pickle locally and redeploy."
+                        )
                     self.creds = None
 
             if not self.creds:
+                # Check if running in cloud environment
+                if os.getenv('K_SERVICE'):  # Cloud Run sets this
+                    raise Exception(
+                        "No valid credentials found in cloud environment. "
+                        "Cannot run browser authentication flow on Cloud Run. "
+                        "Please ensure token.pickle is deployed with valid credentials."
+                    )
+
+                # Only run browser flow locally
+                print("Running browser authentication flow...")
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_file,
                     SCOPES
                 )
                 self.creds = flow.run_local_server(port=0, prompt='consent')
 
-            print(f"Saving credentials to {self.token_file}")
-            with open(self.token_file, 'wb') as token:
-                pickle.dump(self.creds, token)
-            print("Credentials saved\n")
+                print(f"Saving credentials to {self.token_file}")
+                with open(self.token_file, 'wb') as token:
+                    pickle.dump(self.creds, token)
+                print("Credentials saved\n")
 
         return self.creds
 
