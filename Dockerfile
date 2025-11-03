@@ -16,14 +16,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY main.py .
 COPY src/ ./src/
 COPY config/ ./config/
-COPY .env .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV PORT=8080
 
-# Run the application
-CMD ["python", "main.py"]
+# Run the Flask API
+CMD ["python", "src/api/cloud_function.py"]
