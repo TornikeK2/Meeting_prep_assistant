@@ -30,7 +30,7 @@ htmlcov/
 
 # Documentation
 *.md
-!DEPLOYMENT.md
+!not_available/DEPLOYMENT.md
 
 # Data and logs
 data/
