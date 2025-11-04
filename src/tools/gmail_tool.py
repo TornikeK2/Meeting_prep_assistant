@@ -63,7 +63,7 @@ class GmailTool:
                     email_threads.append(email_data)
                     print(f"Found email: '{email_data['subject']}' from {email_data['from']}")
 
-            scored_emails = self._score_emails(email_threads, meeting, customer_name)
+            scored_emails = self._score_emails(email_threads, meeting, customer_name, customer_domain)
             print(f"Returning top {len(scored_emails[:max_results])} emails after scoring")
             return scored_emails[:max_results]
 
@@ -99,6 +99,10 @@ class GmailTool:
             domain_queries.append(f"from:@{customer_domain}")
             domain_queries.append(f"to:@{customer_domain}")
             query_parts.append(f"({' OR '.join(domain_queries)})")
+
+            # IMPORTANT: When searching by domain, skip keyword filtering
+            # Let Gmail return ALL emails from that domain, then scoring filters for relevance
+            # This prevents query from being too restrictive (0 results)
         else:
             # Search by attendees if no domain filter
             attendee_queries = []
@@ -109,29 +113,29 @@ class GmailTool:
             if attendee_queries:
                 query_parts.append(f"({' OR '.join(attendee_queries)})")
 
-        # Search by customer name or keywords
-        if customer_name:
-            # Use customer name as primary keyword
-            name_queries = []
-            name_queries.append(f'subject:"{customer_name}"')
-            name_queries.append(f'"{customer_name}"')
-            query_parts.append(f"({' OR '.join(name_queries)})")
-        elif project_keywords:
-            # Use user-defined project keywords
-            keyword_queries = []
-            for kw in project_keywords:
-                keyword_queries.append(f'subject:"{kw}"')
-                keyword_queries.append(f'"{kw}"')
-            query_parts.append(f"({' OR '.join(keyword_queries)})")
-        else:
-            # Fallback to auto-extraction from meeting title
-            keywords = self._extract_keywords(meeting['title'])
-            if keywords:
+            # Search by customer name or keywords (only when NOT using domain filter)
+            if customer_name:
+                # Use customer name as primary keyword
+                name_queries = []
+                name_queries.append(f'subject:"{customer_name}"')
+                name_queries.append(f'"{customer_name}"')
+                query_parts.append(f"({' OR '.join(name_queries)})")
+            elif project_keywords:
+                # Use user-defined project keywords
                 keyword_queries = []
-                for kw in keywords:
+                for kw in project_keywords:
                     keyword_queries.append(f'subject:"{kw}"')
                     keyword_queries.append(f'"{kw}"')
                 query_parts.append(f"({' OR '.join(keyword_queries)})")
+            else:
+                # Fallback to auto-extraction from meeting title
+                keywords = self._extract_keywords(meeting['title'])
+                if keywords:
+                    keyword_queries = []
+                    for kw in keywords:
+                        keyword_queries.append(f'subject:"{kw}"')
+                        keyword_queries.append(f'"{kw}"')
+                    query_parts.append(f"({' OR '.join(keyword_queries)})")
 
         query_parts.append(f"newer_than:{days}d")
         query_parts.append("-in:spam")
@@ -139,14 +143,29 @@ class GmailTool:
 
         return ' '.join(query_parts)
 
-    def _extract_keywords(self, text: str) -> List[str]:
-        """Extract keywords from meeting title"""
-        stop_words = {
-            'meeting', 'sync', 'call', 'discussion', 'review', 'update',
+    def _extract_keywords(self, text: str, include_common_words: bool = False) -> List[str]:
+        """
+        Extract keywords from meeting title or description
+
+        Args:
+            text: Text to extract keywords from
+            include_common_words: If True, includes review/update etc (for meeting context)
+
+        Returns:
+            List of extracted keywords
+        """
+        # Base stop words (always excluded)
+        base_stop_words = {
+            'meeting', 'sync', 'call', 'discussion',
             'weekly', 'monthly', 'daily', 'standup', 'stand-up', 'stand',
             'the', 'and', 'or', 'with', 'for', 'about', 'on', 'in', 'at',
             'a', 'an', 'of', 'to', 'from', 'by', 'up'
         }
+
+        # Additional stop words for search queries (but keep for meeting context)
+        search_stop_words = {'review', 'update', 'planning', 'check-in', 'checkin'}
+
+        stop_words = base_stop_words if include_common_words else base_stop_words | search_stop_words
 
         # Extract words
         words = re.findall(r'\b\w+\b', text.lower())
@@ -159,6 +178,40 @@ class GmailTool:
 
         # Return top 4 keywords (avoid query being too long)
         return keywords[:4]
+
+    def _extract_meeting_context_keywords(self, meeting: Dict) -> List[str]:
+        """
+        Extract meeting-specific context keywords from title and description
+        These are used to filter emails for relevance to THIS specific meeting
+
+        Returns:
+            List of keywords that represent the meeting context
+        """
+        context_keywords = []
+
+        # Extract from title (keep common words like 'review', 'update')
+        title = meeting.get('title', '')
+        if title:
+            title_keywords = self._extract_keywords(title, include_common_words=True)
+            context_keywords.extend(title_keywords)
+
+        # Extract from description
+        description = meeting.get('description', '')
+        if description:
+            # Clean description (remove URLs, extra whitespace)
+            description_clean = re.sub(r'http\S+', '', description)
+            desc_keywords = self._extract_keywords(description_clean, include_common_words=True)
+            context_keywords.extend(desc_keywords)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_keywords = []
+        for kw in context_keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique_keywords.append(kw)
+
+        return unique_keywords[:8]  # Top 8 meeting-specific keywords
 
     def _get_message_details(self, message_id: str) -> Dict:
         """Get email details"""
@@ -243,57 +296,90 @@ class GmailTool:
         # Last resort: use snippet
         return message.get('snippet', '')
 
-    def _score_emails(self, emails: List[Dict], meeting: Dict, customer_name: str = None) -> List[Dict]:
-        """Score emails by relevance"""
+    def _score_emails(self, emails: List[Dict], meeting: Dict, customer_name: str = None, customer_domain: str = None) -> List[Dict]:
+        """
+        Score emails by relevance using dual-match strategy:
+        - Emails must match BOTH customer keywords AND meeting-specific context
+        - This prevents irrelevant emails (e.g., "Microsoft Office licenses") from
+          being included in briefs about specific meetings (e.g., "Microsoft Q4 Review")
+        """
         scored = []
 
-        meeting_keywords = self._extract_keywords(meeting['title'])
+        # Extract company name from domain if customer_name not provided
+        # e.g., "microsoft.com" → "microsoft"
+        if not customer_name and customer_domain:
+            customer_name = customer_domain.split('.')[0]
+            print(f"Extracted customer name '{customer_name}' from domain '{customer_domain}'")
+
+        # Extract meeting-specific context keywords (from title + description)
+        meeting_context_keywords = self._extract_meeting_context_keywords(meeting)
         meeting_attendees = [a.lower() for a in meeting['attendees']]
+
+        print(f"Meeting context keywords: {meeting_context_keywords}")
 
         for email in emails:
             score = 0.0
+            email_text = f"{email.get('subject', '')} {email.get('body', '')}".lower()
 
             # 1. Attendee match score (40%)
             email_from = email.get('from', '').lower()
             email_to = email.get('to', '').lower()
 
+            attendee_match = False
             for attendee in meeting_attendees:
                 if attendee in email_from or attendee in email_to:
-                    score += 0.5
+                    score += 0.4
+                    attendee_match = True
                     break
 
-            # 2. Keyword relevance (30%)
-            email_text = f"{email.get('subject', '')} {email.get('body', '')}".lower()
-
-            # Boost score if customer name is found
+            # 2. Customer/Project keyword match (25%)
+            customer_match = False
             if customer_name and customer_name.lower() in email_text:
-                score += 0.3
-            elif meeting_keywords:
-                matching_keywords = sum(1 for kw in meeting_keywords if kw in email_text)
-                keyword_score = matching_keywords / len(meeting_keywords)
-                score += 0.3 * keyword_score
+                score += 0.25
+                customer_match = True
 
-            # 3. Recency score (20%)
+            # 3. Meeting-specific context match (25%) - NEW!
+            # This is the key filter to prevent false positives
+            context_match = False
+            if meeting_context_keywords:
+                matching_context = sum(1 for kw in meeting_context_keywords if kw in email_text)
+                if matching_context > 0:
+                    context_score = min(matching_context / len(meeting_context_keywords), 1.0)
+                    score += 0.25 * context_score
+                    context_match = True
+
+            # CRITICAL: Email must match BOTH customer AND meeting context
+            # OR have strong attendee overlap
+            if customer_name and not attendee_match:
+                # If no attendee match, require BOTH customer and context match
+                if not (customer_match and context_match):
+                    # Penalize heavily - this is likely irrelevant
+                    score *= 0.3
+                    email['filter_reason'] = 'Missing meeting context keywords'
+
+            # 4. Recency score (10%)
             date_str = email.get('date', '')
             if self._is_recent(date_str, days=3):
-                score += 0.2
+                score += 0.1
             elif self._is_recent(date_str, days=7):
-                score += 0.1
-
-            # 4. Thread activity (10%)
-            body_length = len(email.get('body', ''))
-            if body_length > 1000:
-                score += 0.1
-            elif body_length > 500:
                 score += 0.05
 
             email['relevance_score'] = round(score, 2)
+            email['customer_match'] = customer_match
+            email['context_match'] = context_match
+            email['attendee_match'] = attendee_match
             scored.append(email)
 
         # Sort by score (highest first)
         scored.sort(key=lambda x: x.get('relevance_score', 0), reverse=True)
 
-        return scored
+        # Filter out low-scoring emails (threshold: 0.4)
+        # This removes emails that only match customer name but lack meeting context
+        filtered_scored = [e for e in scored if e['relevance_score'] >= 0.4]
+
+        print(f"Scored {len(scored)} emails, {len(filtered_scored)} passed threshold (>= 0.4)")
+
+        return filtered_scored
 
     def _is_recent(self, date_str: str, days: int) -> bool:
         """Check if email is recent"""
