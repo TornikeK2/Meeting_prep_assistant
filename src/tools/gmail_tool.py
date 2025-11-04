@@ -63,6 +63,10 @@ class GmailTool:
                     email_threads.append(email_data)
                     print(f"Found email: '{email_data['subject']}' from {email_data['from']}")
 
+            # LLM filtering step: Ask Gemini which emails are relevant
+            if email_threads:
+                email_threads = self._filter_emails_with_llm(email_threads, meeting)
+
             scored_emails = self._score_emails(email_threads, meeting, customer_name, customer_domain)
             print(f"Returning top {len(scored_emails[:max_results])} emails after scoring")
             return scored_emails[:max_results]
@@ -212,6 +216,105 @@ class GmailTool:
                 unique_keywords.append(kw)
 
         return unique_keywords[:8]  # Top 8 meeting-specific keywords
+
+    def _filter_emails_with_llm(self, emails: List[Dict], meeting: Dict, max_batch: int = 50) -> List[Dict]:
+        """
+        Use Gemini to filter relevant emails using batched approach
+
+        Args:
+            emails: List of email dicts with subject, from, snippet
+            meeting: Meeting dict with title and description
+            max_batch: Maximum number of emails to process in one batch
+
+        Returns:
+            Filtered list of relevant emails
+        """
+        if not emails:
+            return []
+
+        # Limit to max_batch to avoid token limits
+        emails_to_filter = emails[:max_batch]
+
+        try:
+            # Build email list for prompt
+            email_list = "\n\n".join([
+                f"{i+1}. Subject: {email.get('subject', 'No subject')}\n"
+                f"   From: {email.get('from', 'Unknown')}\n"
+                f"   Preview: {email.get('snippet', '')[:150]}..."
+                for i, email in enumerate(emails_to_filter)
+            ])
+
+            # Build prompt
+            meeting_title = meeting.get('title', 'Untitled Meeting')
+            meeting_desc = meeting.get('description', 'No description')
+
+            prompt = f"""You are analyzing emails for meeting preparation.
+
+Meeting Title: {meeting_title}
+Meeting Description: {meeting_desc}
+
+Below are {len(emails_to_filter)} emails. Identify which emails are DIRECTLY relevant to this specific meeting.
+
+An email is relevant if it:
+- Discusses the specific topics/projects mentioned in the meeting title
+- Contains action items or decisions related to this meeting
+- Provides background context needed for this meeting
+- Is part of the conversation thread leading to this meeting
+
+An email is NOT relevant if it:
+- Only mentions a company/person name but discusses unrelated topics
+- Is about billing, licenses, or administrative matters (unless meeting is about those)
+- Is a general announcement or newsletter
+- Is about a different project/topic that happens to mention the same keywords
+
+Emails:
+{email_list}
+
+List ONLY the numbers of relevant emails as comma-separated values (e.g., "1, 3, 7").
+If no emails are relevant, respond with "NONE".
+
+RELEVANT EMAILS:"""
+
+            # Call Gemini
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            import os
+
+            model = ChatGoogleGenerativeAI(
+                model="gemini-2.0-flash-exp",
+                google_api_key=os.getenv('GEMINI_API_KEY'),
+                temperature=0.1,
+                max_tokens=200
+            )
+
+            response = model.invoke(prompt)
+            response_text = response.content.strip()
+
+            print(f"LLM filtering response: {response_text}")
+
+            # Parse response
+            if response_text.upper() == "NONE":
+                print("LLM determined no emails are relevant")
+                return []
+
+            # Extract numbers using regex
+            import re
+            numbers = [int(n) for n in re.findall(r'\b\d+\b', response_text)]
+
+            # Filter emails by selected numbers
+            relevant_emails = []
+            for num in numbers:
+                if 1 <= num <= len(emails_to_filter):
+                    relevant_emails.append(emails_to_filter[num - 1])
+
+            print(f"LLM filtered {len(emails_to_filter)} emails → {len(relevant_emails)} relevant")
+
+            return relevant_emails
+
+        except Exception as e:
+            print(f"Error in LLM filtering: {e}")
+            # Fallback: return all emails if filtering fails
+            print("Falling back to all emails due to LLM filtering error")
+            return emails
 
     def _get_message_details(self, message_id: str) -> Dict:
         """Get email details"""

@@ -33,7 +33,6 @@ class CalendarTool:
                 if self._should_prepare_meeting(event):
                     meeting = self._parse_event(event)
                     meeting['is_client_meeting'] = self._is_external_meeting(meeting)
-                    meeting['priority'] = self._calculate_priority(meeting)
                     meetings.append(meeting)
 
             return meetings
@@ -90,7 +89,6 @@ class CalendarTool:
                 if self._should_prepare_meeting(event):
                     meeting = self._parse_event(event)
                     meeting['is_client_meeting'] = self._is_external_meeting(meeting)
-                    meeting['priority'] = self._calculate_priority(meeting)
 
                     # Filter by customer domain, project keywords, or customer name
                     should_include = True
@@ -237,17 +235,6 @@ class CalendarTool:
                 if domain not in [d.lower() for d in self.internal_domains]:
                     return True
         return False
-
-    def _calculate_priority(self, meeting: Dict) -> str:
-        """Calculate meeting priority"""
-        if meeting.get('is_client_meeting'):
-            return 'HIGH'
-        elif len(meeting['attendees']) >= 5:
-            return 'MEDIUM'
-        # elif meeting.get('is_internal_meeting') and len(meeting['attendees']) <= 3:
-        #     return 'INTERNAL'
-        else:
-            return 'LOW'
 
     def _parse_event(self, event: Dict) -> Dict:
         """Parse event data"""
