@@ -47,14 +47,16 @@ class CalendarTool:
         client_meetings = [m for m in all_meetings if m['is_client_meeting']]
         return client_meetings
 
-    def get_meetings_by_date_range(self, start_date, end_date, customer_domain=None):
+    def get_meetings_by_date_range(self, start_date, end_date, customer_domain=None, project_keywords=None, customer_name=None):
         """
-        Get meetings within a specific date range, optionally filtered by customer domain
+        Get meetings within a specific date range, optionally filtered by customer domain, project keywords, or customer name
 
         Args:
             start_date: Start date in format 'YYYY-MM-DD'
             end_date: End date in format 'YYYY-MM-DD'
             customer_domain: Optional domain to filter meetings (e.g., 'microsoft.com')
+            project_keywords: Optional list of project keywords to filter by (e.g., ['alpha', 'mobile'])
+            customer_name: Optional customer name to filter by (e.g., 'Microsoft')
 
         Returns:
             List of meeting dicts
@@ -90,11 +92,20 @@ class CalendarTool:
                     meeting['is_client_meeting'] = self._is_external_meeting(meeting)
                     meeting['priority'] = self._calculate_priority(meeting)
 
-                    # Filter by customer domain if specified
+                    # Filter by customer domain, project keywords, or customer name
+                    should_include = True
+
                     if customer_domain:
-                        if self._has_attendee_from_domain(meeting, customer_domain):
-                            meetings.append(meeting)
-                    else:
+                        # Strict domain filter - attendee must be from that domain
+                        should_include = self._has_attendee_from_domain(meeting, customer_domain)
+                    elif project_keywords:
+                        # Project filter - title/description must contain project keywords
+                        should_include = self._matches_project_keywords(meeting, project_keywords)
+                    elif customer_name:
+                        # Customer name filter - title/description/attendees must match
+                        should_include = self._matches_customer_name(meeting, customer_name)
+
+                    if should_include:
                         meetings.append(meeting)
 
             return meetings
@@ -111,6 +122,66 @@ class CalendarTool:
                 attendee_domain = attendee_email.split('@')[1].lower()
                 if attendee_domain == domain:
                     return True
+        return False
+
+    def _matches_project_keywords(self, meeting, keywords):
+        """
+        Check if meeting title or description contains any of the project keywords
+
+        Args:
+            meeting: Meeting dict with title and description
+            keywords: List of keywords to search for (e.g., ['alpha', 'mobile', 'app'])
+
+        Returns:
+            True if any keyword is found in title or description
+        """
+        if not keywords:
+            return False
+
+        title = meeting.get('title', '').lower()
+        description = meeting.get('description', '').lower()
+        search_text = f"{title} {description}"
+
+        # Check if any keyword matches
+        for keyword in keywords:
+            if keyword.lower() in search_text:
+                return True
+
+        return False
+
+    def _matches_customer_name(self, meeting, customer_name):
+        """
+        Check if customer name appears in meeting title, description, or attendee domains
+
+        This provides comprehensive matching - finds meetings whether the customer name
+        appears in the meeting content OR in attendee email domains.
+
+        Args:
+            meeting: Meeting dict with title, description, and attendees
+            customer_name: Customer name to search for (e.g., 'Microsoft')
+
+        Returns:
+            True if customer name found in title, description, or attendee domains
+        """
+        if not customer_name:
+            return False
+
+        customer_lower = customer_name.lower()
+
+        # Check title and description
+        title = meeting.get('title', '').lower()
+        description = meeting.get('description', '').lower()
+        if customer_lower in title or customer_lower in description:
+            return True
+
+        # Check attendee domains
+        for attendee_email in meeting['attendees']:
+            if '@' in attendee_email:
+                domain = attendee_email.split('@')[1].lower()
+                company = domain.split('.')[0]  # "microsoft.com" → "microsoft"
+                if customer_lower in domain or customer_lower == company:
+                    return True
+
         return False
 
     def _should_prepare_meeting(self, event: Dict) -> bool:
