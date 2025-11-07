@@ -83,6 +83,7 @@ class CalendarTool:
             ).execute()
 
             events = events_result.get('items', [])
+            print(f"Found {len(events)} total calendar events")
             meetings = []
 
             for event in events:
@@ -96,16 +97,20 @@ class CalendarTool:
                     if customer_domain:
                         # Strict domain filter - attendee must be from that domain
                         should_include = self._has_attendee_from_domain(meeting, customer_domain)
+                        print(f"Meeting '{meeting['title']}' - domain filter ({customer_domain}): {should_include}")
                     elif project_keywords:
                         # Project filter - title/description must contain project keywords
                         should_include = self._matches_project_keywords(meeting, project_keywords)
+                        print(f"Meeting '{meeting['title']}' - project filter ({project_keywords}): {should_include}")
                     elif customer_name:
                         # Customer name filter - title/description/attendees must match
                         should_include = self._matches_customer_name(meeting, customer_name)
+                        print(f"Meeting '{meeting['title']}' - name filter ({customer_name}): {should_include}")
 
                     if should_include:
                         meetings.append(meeting)
 
+            print(f"Returning {len(meetings)} filtered meetings")
             return meetings
 
         except Exception as e:
