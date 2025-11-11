@@ -84,6 +84,23 @@ class CalendarTool:
 
             events = events_result.get('items', [])
             print(f"Found {len(events)} total calendar events")
+            print("=" * 80)
+            print("RAW CALENDAR EVENTS:")
+            for i, event in enumerate(events, 1):
+                print(f"\n[Event {i}] {event.get('summary', 'Untitled')}")
+                print(f"  Start: {event.get('start', {}).get('dateTime', 'N/A')}")
+                print(f"  Attendees: {len(event.get('attendees', []))} people")
+                attendee_emails = [a.get('email') for a in event.get('attendees', []) if a.get('email')]
+                if attendee_emails:
+                    print(f"  Attendee emails: {', '.join(attendee_emails[:3])}{'...' if len(attendee_emails) > 3 else ''}")
+                print(f"  Status: {event.get('status', 'N/A')}")
+                print(f"  attendeesOmitted: {event.get('attendeesOmitted', 'Not set')}")
+                print(f"  guestsCanSeeOtherGuests: {event.get('guestsCanSeeOtherGuests', 'Not set')}")
+                print(f"  organizer: {event.get('organizer', {}).get('email', 'N/A')}")
+                print(f"  visibility: {event.get('visibility', 'Not set')}")
+                print(f"  Description: {event.get('description', '')[:100]}{'...' if len(event.get('description', '')) > 100 else ''}")
+            print("=" * 80)
+
             meetings = []
 
             for event in events:
@@ -227,7 +244,24 @@ class CalendarTool:
         if any(keyword in title or keyword in description for keyword in skip_keywords):
             return False
 
+        # Check attendee count, but handle large meetings where attendees are hidden
+        # When guestsCanSeeOtherGuests is False, Google Calendar only shows the current user
+        # This is common for company-wide meetings (webinars, training sessions, etc.)
+        attendees_omitted = event.get('attendeesOmitted', False)
+        guests_can_see_others = event.get('guestsCanSeeOtherGuests', True)
+
+        if attendees_omitted:
+            # Large meeting with truncated attendee list - include it
+            print(f"Meeting '{event.get('summary', 'Untitled')}' has truncated attendee list (large meeting) - including")
+            return True
+
+        if not guests_can_see_others and len(attendees) == 1:
+            # Large meeting where attendees are hidden from each other - include it
+            print(f"Meeting '{event.get('summary', 'Untitled')}' is a large meeting with hidden attendees - including")
+            return True
+
         if len(attendees) < 2:
+            print(f"Meeting '{event.get('summary', 'Untitled')}' has only {len(attendees)} attendee(s) - excluding")
             return False
 
         return True
