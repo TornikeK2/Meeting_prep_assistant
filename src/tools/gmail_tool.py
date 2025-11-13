@@ -57,11 +57,21 @@ class GmailTool:
                 return []
 
             email_threads = []
+            calendar_notifications_filtered = 0
             for msg in messages:
                 email_data = self._get_message_details(msg['id'])
                 if email_data:
+                    # Filter out calendar notifications before LLM processing
+                    if self._is_calendar_notification_email(email_data):
+                        calendar_notifications_filtered += 1
+                        print(f"Filtered calendar notification: '{email_data['subject']}' from {email_data['from']}")
+                        continue
+
                     email_threads.append(email_data)
                     print(f"Found email: '{email_data['subject']}' from {email_data['from']}")
+
+            if calendar_notifications_filtered > 0:
+                print(f"Filtered out {calendar_notifications_filtered} calendar notification emails")
 
             # LLM filtering step: Ask Gemini which emails are relevant
             if email_threads:
@@ -146,6 +156,90 @@ class GmailTool:
         query_parts.append("-in:trash")
 
         return ' '.join(query_parts)
+
+    def _is_calendar_notification_email(self, email: Dict) -> bool:
+        """
+        Detect if an email is a calendar invitation/update notification.
+        These emails don't provide valuable meeting context and waste tokens.
+
+        Args:
+            email: Email dict with subject, from, body, snippet
+
+        Returns:
+            True if email is a calendar notification, False otherwise
+        """
+        subject = email.get('subject', '').lower()
+        from_email = email.get('from', '').lower()
+        body = email.get('body', '').lower()
+        snippet = email.get('snippet', '').lower()
+
+        # Check from address - common calendar notification senders
+        calendar_senders = [
+            'calendar-notification@google.com',
+            'no-reply@calendar.google.com',
+            'noreply@calendar.google.com',
+            'calendar@google.com',
+            'notify@calendar.google.com'
+        ]
+
+        if any(sender in from_email for sender in calendar_senders):
+            return True
+
+        # Check subject patterns for calendar notifications
+        calendar_subject_patterns = [
+            'invitation:',
+            'accepted:',
+            'declined:',
+            'updated:',
+            'canceled:',
+            'cancelled:',
+            'response:',
+            'has invited you',
+            'has updated',
+            'has accepted',
+            'has declined',
+            'has tentatively accepted',
+            'invitation for',
+            'accepted invitation',
+            'declined invitation',
+            'event reminder:',
+            'reminder:',
+            'upcoming event'
+        ]
+
+        for pattern in calendar_subject_patterns:
+            if pattern in subject:
+                return True
+
+        # Check body/snippet for calendar notification content patterns
+        calendar_content_patterns = [
+            'view your event at',
+            'going?',
+            'yes, no, maybe?',
+            'event details',
+            'join the meeting',
+            'add this event to your calendar',
+            'calendar invitation',
+            'meeting invitation',
+            'has invited you to',
+            'rsvp:',
+            'accept this invitation'
+        ]
+
+        content_to_check = snippet + ' ' + body[:500]
+
+        # Count pattern matches
+        pattern_matches = sum(1 for pattern in calendar_content_patterns if pattern in content_to_check)
+
+        # If multiple calendar patterns found, it's likely a notification
+        if pattern_matches >= 2:
+            return True
+
+        # Check if email is very short and contains calendar link
+        if len(body) < 300 and ('calendar.google.com' in body or 'meet.google.com' in body):
+            return True
+
+        return False
 
     def _extract_keywords(self, text: str, include_common_words: bool = False) -> List[str]:
         """
@@ -266,6 +360,8 @@ An email is NOT relevant if it:
 - Is about billing, licenses, or administrative matters (unless meeting is about those)
 - Is a general announcement or newsletter
 - Is about a different project/topic that happens to mention the same keywords
+- Is a calendar invitation, update notification, or RSVP response (no business context)
+- Only contains meeting logistics (time, location, join link) without discussion content
 
 Emails:
 {email_list}
